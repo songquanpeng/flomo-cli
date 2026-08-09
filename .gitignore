@@ -1,0 +1,7 @@
+/bin/
+.idea/
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+coverage.out
