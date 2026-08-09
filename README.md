@@ -11,6 +11,12 @@ go install github.com/songquanpeng/flomo-cli/cmd/flomo@latest
 ```
 
 The executable is installed into `GOBIN`, or `$(go env GOPATH)/bin` when `GOBIN` is unset.
+Ensure that directory is included in your shell's `PATH`; with the default Go layout:
+
+```sh
+export PATH="$(go env GOPATH)/bin:$PATH"
+```
+
 Run the command again whenever you want to update. `flomo update` prints this exact command
 from the CLI, and `make install` / `make update` are convenience aliases for it.
 

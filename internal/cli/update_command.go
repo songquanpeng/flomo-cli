@@ -27,7 +27,7 @@ replace the currently running executable automatically.`,
 			}
 			fmt.Fprintln(rt.out, "Install or update flomo to the latest release with:")
 			fmt.Fprintf(rt.out, "  %s\n", updateCommand)
-			fmt.Fprintln(rt.out, "The binary is written to GOBIN, or $(go env GOPATH)/bin when GOBIN is unset.")
+			fmt.Fprintln(rt.out, "The binary is written to GOBIN, or $(go env GOPATH)/bin when GOBIN is unset; ensure that directory is on PATH.")
 			return nil
 		},
 	}
