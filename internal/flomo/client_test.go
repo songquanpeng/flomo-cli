@@ -78,6 +78,18 @@ func TestMemoAdapterMapsV1SyncAndV2Write(t *testing.T) {
 				t.Errorf("write method = %s", r.Method)
 			}
 			_, _ = w.Write([]byte(`{"code":0,"data":{"slug":"m2","content":"<p>new</p>"}}`))
+		case "/api/v2/memo/m1":
+			if r.Method != http.MethodPut {
+				t.Errorf("edit method = %s", r.Method)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if body["content"] != "<p>edited</p>" || body["created_at"] != "2026-01-01 00:00:00" {
+				t.Errorf("edit body = %#v", body)
+			}
+			_, _ = w.Write([]byte(`{"code":0,"data":{"slug":"m1","content":"<p>edited</p>"}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -98,6 +110,16 @@ func TestMemoAdapterMapsV1SyncAndV2Write(t *testing.T) {
 	}
 	if created.Slug != "m2" {
 		t.Fatalf("created = %#v", created)
+	}
+	edited, err := client.EditMemo(context.Background(), "m1", domain.EditMemoRequest{
+		Content: "<p>edited</p>", CreatedAt: "2026-01-01 00:00:00", LocalUpdatedAt: 2,
+		MemoFrom: "api", Source: "flomo_cli", FileIDs: []any{1}, Timezone: "8:0", Pinned: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.Slug != "m1" || edited.Content != "<p>edited</p>" {
+		t.Fatalf("edited = %#v", edited)
 	}
 }
 

@@ -33,6 +33,17 @@ type AddMemoRequest struct {
 	Timezone  string
 }
 
+type EditMemoRequest struct {
+	Content        string
+	CreatedAt      string
+	LocalUpdatedAt int64
+	MemoFrom       string
+	Source         string
+	FileIDs        []any
+	Timezone       string
+	Pinned         bool
+}
+
 type User struct {
 	Slug       string `json:"slug,omitempty"`
 	Nickname   string `json:"nickname,omitempty"`

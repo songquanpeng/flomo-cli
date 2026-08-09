@@ -17,7 +17,7 @@ import (
 )
 
 func newSyncCommand(rt *runtime) *cobra.Command {
-	var full bool
+	var full, skipAttachments bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Incrementally mirror remote memos into local SQLite",
@@ -34,7 +34,7 @@ existing local rows are safely upserted.`,
 			if err != nil {
 				return err
 			}
-			store, _, err := rt.openStore()
+			store, cfg, err := rt.openStore()
 			if err != nil {
 				return err
 			}
@@ -43,22 +43,39 @@ existing local rows are safely upserted.`,
 			if err != nil {
 				return err
 			}
+			var attachments *service.AttachmentSyncResult
+			if !skipAttachments {
+				attachmentResult, err := service.NewAttachmentService(store, cfg.AttachmentsDir()).Sync(commandContext(cmd), "")
+				if err != nil {
+					return fmt.Errorf("sync attachments: %w", err)
+				}
+				attachments = &attachmentResult
+			}
 			if rt.wantsJSON() {
 				response := struct {
 					service.SyncResult
-					SuggestedCommands []string `json:"suggested_commands"`
+					Attachments       *service.AttachmentSyncResult `json:"attachments,omitempty"`
+					SuggestedCommands []string                      `json:"suggested_commands"`
 				}{
 					SyncResult:        result,
-					SuggestedCommands: []string{"flomo list --json", "flomo search '<topic>' --json"},
+					Attachments:       attachments,
+					SuggestedCommands: []string{"flomo list --json", "flomo search '<topic>' --json", "flomo attachments list --json"},
 				}
 				return writeJSON(rt.out, response, true)
 			}
 			fmt.Fprintf(rt.out, "Synced %d memo changes in %d page(s). Local index is current as of %s.\n", result.Fetched, result.Pages, result.SyncedAt)
+			if attachments != nil {
+				fmt.Fprintf(rt.out, "Attachments: %d downloaded, %d already local, %d failed; directory: %s\n", attachments.Downloaded, attachments.Skipped, attachments.Failed, attachments.Directory)
+				if attachments.Failed > 0 {
+					fmt.Fprintln(rt.out, "Inspect failures: flomo attachments list --missing --json; refresh expired URLs with `flomo sync --full`.")
+				}
+			}
 			fmt.Fprintln(rt.out, "Next: flomo list --json, or flomo search '<topic>' --json")
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&full, "full", false, "read all remote memo history instead of resuming the cursor")
+	cmd.Flags().BoolVar(&skipAttachments, "skip-attachments", false, "update memo metadata without downloading attachment files")
 	return cmd
 }
 
@@ -120,6 +137,173 @@ use --html only when deliberately providing flomo-compatible HTML.`,
 	cmd.Flags().StringVar(&createdAt, "created-at", "", "creation time: RFC3339, 'YYYY-MM-DD HH:MM:SS', or YYYY-MM-DD")
 	cmd.Flags().BoolVar(&contentHTML, "html", false, "treat input as flomo-compatible HTML")
 	return cmd
+}
+
+func newEditCommand(rt *runtime) *cobra.Command {
+	var addTags, removeTags []string
+	var contentHTML bool
+	cmd := &cobra.Command{
+		Use:   "edit <slug> [text|-]",
+		Short: "Edit a remote memo or add/remove its tags",
+		Args:  cobra.MinimumNArgs(1),
+		Long: `Edit one memo on flomo and immediately update its local SQLite row.
+
+Omit text for a tag-only edit. Use "-" to read replacement text from stdin. Existing
+attachments, creation time, source, and pin state are preserved automatically.`,
+		Example: `  flomo edit MTIzNDU2 "替换后的正文"
+  flomo edit MTIzNDU2 --add-tag 工作 --remove-tag 收件箱
+  printf '多行正文\n#想法' | flomo edit MTIzNDU2 - --json`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 && len(addTags) == 0 && len(removeTags) == 0 {
+				return errors.New("provide replacement text, --add-tag, or --remove-tag")
+			}
+			var replacement *string
+			if len(args) > 1 {
+				value, err := memoInput(args[1:])
+				if err != nil {
+					return err
+				}
+				replacement = &value
+			}
+			client, _, err := rt.authenticatedClient()
+			if err != nil {
+				return err
+			}
+			store, _, err := rt.openStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			memo, err := service.NewMemoService(client, store, rt.timezone).Edit(commandContext(cmd), args[0], replacement, contentHTML, addTags, removeTags)
+			if err != nil {
+				if errors.Is(err, storage.ErrMemoNotFound) {
+					return fmt.Errorf("memo %s is not in the local index; run `flomo sync` and retry", args[0])
+				}
+				return fmt.Errorf("edit memo: %w", err)
+			}
+			if rt.wantsJSON() {
+				memo.ContentHTML = ""
+				return writeJSON(rt.out, struct {
+					storage.Memo
+					SuggestedCommands []string `json:"suggested_commands"`
+				}{memo, []string{"flomo get " + memo.Slug + " --json"}}, true)
+			}
+			fmt.Fprintf(rt.out, "Edited %s\nInspect: flomo get %s --json\n", memo.Slug, memo.Slug)
+			return nil
+		},
+	}
+	cmd.Flags().StringSliceVar(&addTags, "add-tag", nil, "add a tag if absent (repeatable; omit #)")
+	cmd.Flags().StringSliceVar(&removeTags, "remove-tag", nil, "remove an exact tag (repeatable; omit #)")
+	cmd.Flags().BoolVar(&contentHTML, "html", false, "treat replacement text as flomo-compatible HTML")
+	return cmd
+}
+
+func newAttachmentsCommand(rt *runtime) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "attachments",
+		Aliases: []string{"media"},
+		Short:   "Download and inspect local copies of memo attachments",
+		Long: `Attachment files are cached below FLOMO_HOME and their absolute paths are stored in SQLite.
+
+Regular "flomo sync" downloads missing files automatically. Use this command to inspect
+paths or retry individual download failures without contacting the memo API.`,
+	}
+	cmd.AddCommand(newAttachmentsListCommand(rt), newAttachmentsSyncCommand(rt))
+	return cmd
+}
+
+func newAttachmentsListCommand(rt *runtime) *cobra.Command {
+	var missing bool
+	cmd := &cobra.Command{
+		Use:   "list [slug]",
+		Short: "List attachment metadata and absolute local file paths",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			slug := ""
+			if len(args) == 1 {
+				slug = args[0]
+			}
+			store, _, err := rt.openStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			items, err := service.NewAttachmentService(store, "").List(commandContext(cmd), slug)
+			if err != nil {
+				return err
+			}
+			if missing {
+				filtered := items[:0]
+				for _, item := range items {
+					if item.LocalPath == "" || item.DownloadError != "" {
+						filtered = append(filtered, item)
+					}
+				}
+				items = filtered
+			}
+			if rt.wantsJSON() {
+				return writeJSON(rt.out, struct {
+					Count             int                        `json:"count"`
+					Items             []service.AttachmentRecord `json:"items"`
+					SuggestedCommands []string                   `json:"suggested_commands"`
+				}{len(items), items, []string{"flomo attachments sync --json"}}, true)
+			}
+			if len(items) == 0 {
+				fmt.Fprintln(rt.out, "No matching local attachment metadata. Run `flomo sync` if the index may be stale.")
+				return nil
+			}
+			for _, item := range items {
+				path := item.LocalPath
+				if path == "" {
+					path = "NOT_DOWNLOADED"
+				}
+				fmt.Fprintf(rt.out, "%s  %s  %s\n  %s\n", item.MemoSlug, item.Type, item.Name, path)
+				if item.DownloadError != "" {
+					fmt.Fprintf(rt.out, "  error: %s\n", item.DownloadError)
+				}
+			}
+			fmt.Fprintln(rt.out, "Retry missing files: flomo attachments sync --json")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&missing, "missing", false, "show only files not downloaded or with a download error")
+	return cmd
+}
+
+func newAttachmentsSyncCommand(rt *runtime) *cobra.Command {
+	return &cobra.Command{
+		Use:   "sync [slug]",
+		Short: "Download missing attachments and persist their local paths",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			slug := ""
+			if len(args) == 1 {
+				slug = args[0]
+			}
+			store, cfg, err := rt.openStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			result, err := service.NewAttachmentService(store, cfg.AttachmentsDir()).Sync(commandContext(cmd), slug)
+			if err != nil {
+				return err
+			}
+			if rt.wantsJSON() {
+				return writeJSON(rt.out, struct {
+					service.AttachmentSyncResult
+					SuggestedCommands []string `json:"suggested_commands"`
+				}{result, []string{"flomo attachments list --json", "flomo attachments list --missing --json"}}, true)
+			}
+			fmt.Fprintf(rt.out, "Attachments: %d downloaded (%d bytes), %d already local, %d failed.\nDirectory: %s\n", result.Downloaded, result.Bytes, result.Skipped, result.Failed, result.Directory)
+			if result.Failed > 0 {
+				fmt.Fprintln(rt.out, "Inspect failures: flomo attachments list --missing --json")
+			} else {
+				fmt.Fprintln(rt.out, "Inspect local paths: flomo attachments list --json")
+			}
+			return nil
+		},
+	}
 }
 
 func memoInput(args []string) (string, error) {
@@ -496,11 +680,14 @@ func newAgentGuideCommand(rt *runtime) *cobra.Command {
 3. Narrowing: repeat --tag for AND filters; use --from/--to; use --any for broad recall.
 4. Retrieval: use "flomo get <slug> --json" for a stable exact record.
 5. Large corpus: use "flomo export --output jsonl" and process one JSON object per line.
-6. Writing: pipe content into "flomo add - --tag <tag> --json". Never place passwords in argv; use login --password-stdin.
+6. Attachments: use "flomo attachments list [slug] --json" for local_path, SHA-256, and recording transcripts.
+7. Writing: pipe content into "flomo add - --tag <tag> --json"; edit with "flomo edit <slug> [text|-] --add-tag/--remove-tag".
+8. Authentication: never place passwords in argv; use "flomo login --password-stdin".
 
 Search is local/offline. JSON fields are stable: query, total, count, limit, offset,
 has_more, and items[]. Each item contains slug, plain content, tags, timestamps,
-source metadata, pin state, and attachments metadata.
+source metadata, pin state, and attachments metadata. Sync downloads attachments by
+default; use --skip-attachments only when files are not needed.
 `)
 			return nil
 		},

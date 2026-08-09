@@ -65,6 +65,8 @@ Search never contacts flomo; run "flomo sync" explicitly when fresh data is requ
 		newStatusCommand(rt),
 		newSyncCommand(rt),
 		newAddCommand(rt),
+		newEditCommand(rt),
+		newAttachmentsCommand(rt),
 		newSearchCommand(rt),
 		newListCommand(rt),
 		newGetCommand(rt),

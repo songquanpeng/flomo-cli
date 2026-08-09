@@ -41,6 +41,8 @@ func Load(homeOverride, dbOverride, apiOverride string) (Config, error) {
 
 func (c Config) AuthPath() string { return filepath.Join(c.HomeDir, "auth.json") }
 
+func (c Config) AttachmentsDir() string { return filepath.Join(c.HomeDir, "attachments") }
+
 func (c Config) EnsureDirs() error {
 	if err := os.MkdirAll(c.HomeDir, 0o700); err != nil {
 		return fmt.Errorf("create flomo home: %w", err)

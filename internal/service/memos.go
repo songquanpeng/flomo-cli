@@ -28,6 +28,7 @@ type MemoService struct {
 type MemoGateway interface {
 	UpdatedMemos(ctx context.Context, limit int, latestUpdatedAt int64, latestSlug, timezone string) ([]domain.Memo, error)
 	AddMemo(ctx context.Context, request domain.AddMemoRequest) (domain.Memo, error)
+	EditMemo(ctx context.Context, slug string, request domain.EditMemoRequest) (domain.Memo, error)
 }
 
 type SyncResult struct {
@@ -156,6 +157,91 @@ func (s *MemoService) Add(ctx context.Context, plainText string, tags []string, 
 	return memo, nil
 }
 
+func (s *MemoService) Edit(ctx context.Context, slug string, replacement *string, contentIsHTML bool, addTags, removeTags []string) (storage.Memo, error) {
+	current, err := s.store.GetMemo(ctx, slug, false)
+	if err != nil {
+		return storage.Memo{}, err
+	}
+	contentHTML := current.ContentHTML
+	if contentHTML == "" {
+		contentHTML = textutil.ToHTML(current.Content)
+	}
+	if replacement != nil {
+		value := strings.TrimSpace(*replacement)
+		if value == "" {
+			return storage.Memo{}, errors.New("replacement memo content is empty")
+		}
+		if utf8.RuneCountInString(value) > 30000 {
+			return storage.Memo{}, errors.New("memo exceeds flomo's 30,000-character limit")
+		}
+		contentHTML = value
+		if !contentIsHTML {
+			contentHTML = textutil.ToHTML(value)
+		}
+	}
+	contentHTML, err = textutil.UpdateHTMLTags(contentHTML, addTags, removeTags)
+	if err != nil {
+		return storage.Memo{}, err
+	}
+	if contentHTML == current.ContentHTML {
+		return current, nil
+	}
+	fileIDs, err := attachmentFileIDs(current.Files)
+	if err != nil {
+		return storage.Memo{}, fmt.Errorf("read existing attachment IDs: %w", err)
+	}
+	source := current.Source
+	if source == "" {
+		source = "web"
+	}
+	remote, err := s.client.EditMemo(ctx, slug, domain.EditMemoRequest{
+		Content:        contentHTML,
+		CreatedAt:      current.CreatedAt,
+		LocalUpdatedAt: time.Now().Unix(),
+		MemoFrom:       current.MemoFrom,
+		Source:         source,
+		FileIDs:        fileIDs,
+		Timezone:       s.timezone,
+		Pinned:         current.Pinned,
+	})
+	if err != nil {
+		return storage.Memo{}, err
+	}
+	if remote.Slug == "" {
+		remote.Slug = slug
+	}
+	if remote.Content == "" {
+		remote.Content = contentHTML
+	}
+	if remote.CreatedAt == "" {
+		remote.CreatedAt = current.CreatedAt
+	}
+	if remote.UpdatedAt == "" {
+		remote.UpdatedAt = formatFlomoTime(time.Now().In(s.location))
+	}
+	if remote.MemoFrom == "" {
+		remote.MemoFrom = current.MemoFrom
+	}
+	if remote.Source == "" {
+		remote.Source = source
+	}
+	if len(remote.Pin) == 0 || string(remote.Pin) == "null" {
+		remote.Pin = json.RawMessage(strconv.Itoa(boolNumber(current.Pinned)))
+	}
+	if len(remote.Files) == 0 || string(remote.Files) == "null" {
+		remote.Files = current.Files
+	}
+	edited := s.toStorageMemo(remote)
+	if err := s.store.UpsertMemos(ctx, []storage.Memo{edited}); err != nil {
+		return storage.Memo{}, fmt.Errorf("memo was edited remotely but local caching failed: %w", err)
+	}
+	cached, err := s.store.GetMemo(ctx, edited.Slug, false)
+	if err != nil {
+		return storage.Memo{}, fmt.Errorf("memo was edited remotely but local reload failed: %w", err)
+	}
+	return cached, nil
+}
+
 func (s *MemoService) toStorageMemo(memo domain.Memo) storage.Memo {
 	text := textutil.PlainText(memo.Content)
 	return storage.Memo{
@@ -227,6 +313,40 @@ func parsePinned(raw json.RawMessage) bool {
 }
 
 func formatFlomoTime(value time.Time) string { return value.Format("2006-01-02 15:04:05") }
+
+func attachmentFileIDs(raw json.RawMessage) ([]any, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return []any{}, nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	var files []map[string]any
+	if err := decoder.Decode(&files); err != nil {
+		return nil, err
+	}
+	result := make([]any, 0, len(files))
+	seen := make(map[string]struct{}, len(files))
+	for _, file := range files {
+		id, exists := file["id"]
+		if !exists || id == nil || fmt.Sprint(id) == "" || strings.HasPrefix(fmt.Sprint(id), "local_") {
+			continue
+		}
+		key := fmt.Sprint(id)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, id)
+	}
+	return result, nil
+}
+
+func boolNumber(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
 
 func webTimezone(location *time.Location, at time.Time) string {
 	_, offsetSeconds := at.In(location).Zone()

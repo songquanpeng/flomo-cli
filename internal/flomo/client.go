@@ -137,6 +137,27 @@ func (c *Client) AddMemo(ctx context.Context, options domain.AddMemoRequest) (do
 	return memo.domain(), nil
 }
 
+func (c *Client) EditMemo(ctx context.Context, slug string, options domain.EditMemoRequest) (domain.Memo, error) {
+	if strings.TrimSpace(slug) == "" {
+		return domain.Memo{}, errors.New("cannot edit a memo without a slug")
+	}
+	params := map[string]any{
+		"content":          options.Content,
+		"created_at":       options.CreatedAt,
+		"local_updated_at": options.LocalUpdatedAt,
+		"source":           options.Source,
+		"memo_from":        options.MemoFrom,
+		"file_ids":         options.FileIDs,
+		"tz":               options.Timezone,
+		"pin":              boolNumber(options.Pinned),
+	}
+	var memo memoDTO
+	if err := c.call(ctx, http.MethodPut, 2, "/memo/"+url.PathEscape(slug), params, &memo); err != nil {
+		return domain.Memo{}, err
+	}
+	return memo.domain(), nil
+}
+
 func (c *Client) call(ctx context.Context, method string, version int, path string, input map[string]any, output any) error {
 	params := make(map[string]any, len(input)+6)
 	for key, value := range input {
@@ -296,4 +317,11 @@ func responseSnippet(body []byte) string {
 		value = value[:max] + "..."
 	}
 	return strconv.QuoteToASCII(value)
+}
+
+func boolNumber(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }

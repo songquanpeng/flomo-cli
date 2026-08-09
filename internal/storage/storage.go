@@ -184,6 +184,13 @@ func (s *Store) UpsertMemos(ctx context.Context, memos []Memo) error {
 		if len(files) == 0 || string(files) == "null" {
 			files = json.RawMessage("[]")
 		}
+		var existingFiles string
+		err = tx.QueryRowContext(ctx, `SELECT files_json FROM memos WHERE slug = ?`, memo.Slug).Scan(&existingFiles)
+		if err == nil {
+			files = mergeLocalFileMetadata(json.RawMessage(existingFiles), files)
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read existing attachments for %s: %w", memo.Slug, err)
+		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO memos(
 			slug, content_html, content_text, tags_json, created_at, created_unix,
 			updated_at, updated_unix, deleted_at, memo_from, source, pinned, files_json, synced_at
@@ -220,6 +227,53 @@ func (s *Store) UpsertMemos(ctx context.Context, memos []Memo) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit memo upsert: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListMemosWithFiles(ctx context.Context, slug string) ([]Memo, error) {
+	query := `SELECT slug, content_html, content_text, tags_json, created_at, created_unix,
+		updated_at, updated_unix, deleted_at, memo_from, source, pinned, files_json
+		FROM memos WHERE deleted_at = '' AND files_json NOT IN ('', '[]', 'null')`
+	args := []any{}
+	if slug != "" {
+		query += ` AND slug = ?`
+		args = append(args, slug)
+	}
+	query += ` ORDER BY created_unix DESC, slug DESC`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list memos with attachments: %w", err)
+	}
+	defer rows.Close()
+	result := []Memo{}
+	for rows.Next() {
+		memo, err := scanMemo(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan memo attachments: %w", err)
+		}
+		result = append(result, memo)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate memo attachments: %w", err)
+	}
+	return result, nil
+}
+
+func (s *Store) UpdateMemoFiles(ctx context.Context, slug string, files json.RawMessage) error {
+	if len(files) == 0 {
+		files = json.RawMessage("[]")
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE memos SET files_json = ?, synced_at = ? WHERE slug = ?`, string(files), time.Now().UTC().Format(time.RFC3339), slug)
+	if err != nil {
+		return fmt.Errorf("update attachment metadata for %s: %w", slug, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check attachment metadata update for %s: %w", slug, err)
+	}
+	if rows == 0 {
+		return ErrMemoNotFound
 	}
 	return nil
 }
@@ -467,4 +521,55 @@ func boolInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func mergeLocalFileMetadata(existing, incoming json.RawMessage) json.RawMessage {
+	oldFiles, oldOK := decodeFileMaps(existing)
+	newFiles, newOK := decodeFileMaps(incoming)
+	if !oldOK || !newOK {
+		return incoming
+	}
+	oldByKey := make(map[string]map[string]any, len(oldFiles))
+	for _, file := range oldFiles {
+		if key := fileIdentity(file); key != "" {
+			oldByKey[key] = file
+		}
+	}
+	localFields := []string{"local_path", "sha256", "downloaded_at", "download_error"}
+	for _, file := range newFiles {
+		old := oldByKey[fileIdentity(file)]
+		if old == nil {
+			continue
+		}
+		for _, field := range localFields {
+			if value, exists := old[field]; exists {
+				file[field] = value
+			}
+		}
+	}
+	encoded, err := json.Marshal(newFiles)
+	if err != nil {
+		return incoming
+	}
+	return encoded
+}
+
+func decodeFileMaps(raw json.RawMessage) ([]map[string]any, bool) {
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	var files []map[string]any
+	if err := decoder.Decode(&files); err != nil {
+		return nil, false
+	}
+	return files, true
+}
+
+func fileIdentity(file map[string]any) string {
+	if id, exists := file["id"]; exists && id != nil && fmt.Sprint(id) != "" {
+		return "id:" + fmt.Sprint(id)
+	}
+	if url, exists := file["url"].(string); exists && url != "" {
+		return "url:" + url
+	}
+	return ""
 }

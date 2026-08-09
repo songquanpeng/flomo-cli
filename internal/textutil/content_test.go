@@ -21,3 +21,31 @@ func TestToHTML(t *testing.T) {
 		t.Fatalf("ToHTML() = %q, want %q", got, want)
 	}
 }
+
+func TestUpdateHTMLTagsPreservesFormatting(t *testing.T) {
+	input := `<p><strong>Idea</strong> #old</p><ul><li>item #keep</li></ul>`
+	got, err := UpdateHTMLTags(input, []string{"new", "keep"}, []string{"old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `<p><strong>Idea</strong> </p><ul><li>item #keep</li></ul><p>#new</p>`
+	if got != want {
+		t.Fatalf("UpdateHTMLTags() = %q, want %q", got, want)
+	}
+}
+
+func TestUpdateHTMLTagsRejectsConflicts(t *testing.T) {
+	if _, err := UpdateHTMLTags(`<p>#same</p>`, []string{"same"}, []string{"same"}); err == nil {
+		t.Fatal("expected conflicting tag edit to fail")
+	}
+}
+
+func TestUpdateHTMLTagsRemovesOnlyExactHierarchicalTag(t *testing.T) {
+	got, err := UpdateHTMLTags(`<p>#工作 #工作/项目</p>`, nil, []string{"工作"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `<p> #工作/项目</p>`; got != want {
+		t.Fatalf("UpdateHTMLTags() = %q, want %q", got, want)
+	}
+}

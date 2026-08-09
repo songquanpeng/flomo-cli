@@ -25,11 +25,15 @@ flomo login --account you@example.com
 flomo sync
 flomo search "人工智能 写作" --json
 flomo add "新的想法" --tag 灵感
+flomo edit <slug> --add-tag 已整理 --remove-tag 收件箱
+flomo attachments list <slug> --json
 ```
 
 To use another system prefix, run `sudo make install PREFIX=/custom/path`. `make install-go` installs the current checkout into `GOBIN` instead.
 
 Run `flomo --help`, `flomo <command> --help`, or `flomo agent-guide`; the CLI contains its complete operating guidance. Paginated text output prints the exact next command, while JSON includes a machine-readable `next.command`. Credentials are stored with mode `0600`, passwords are never saved, and `FLOMO_TOKEN` can provide an ephemeral token without writing it to disk.
+
+`flomo sync` also downloads missing image and recording attachments under the private state directory and stores their absolute paths and SHA-256 values with the SQLite metadata. `flomo attachments list --json` exposes those paths and recording transcripts to agents; `--skip-attachments` disables downloading for a particular sync.
 
 The web endpoints used by flomo's own client are not a documented public API and may change. Their protocol is isolated in `internal/flomo` so the rest of the CLI remains stable if the transport needs updating.
 
@@ -37,7 +41,7 @@ The web endpoints used by flomo's own client are not a documented public API and
 
 - `cmd/flomo` is the executable entry point used by `go install`; `internal/cli` owns command parsing and presentation.
 - `internal/domain` is the stable model owned by this project.
-- `internal/service` depends on a `MemoGateway` port, never the concrete Web API client.
+- `internal/service` depends on a `MemoGateway` port, never the concrete Web API client, and owns attachment caching.
 - `internal/flomo` is the volatile adapter: signing, versioned endpoints, private wire DTOs, browser request profile, pacing, compression, and DTO-to-domain mapping live only here.
 - `internal/storage` owns migrations, SQLite persistence, tag relations, pagination, and FTS5 trigram search.
 
