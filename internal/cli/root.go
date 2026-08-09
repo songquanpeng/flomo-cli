@@ -72,6 +72,7 @@ Search never contacts flomo; run "flomo sync" explicitly when fresh data is requ
 		newGetCommand(rt),
 		newStatsCommand(rt),
 		newExportCommand(rt),
+		newUpdateCommand(rt),
 		newAgentGuideCommand(rt),
 		newCompletionCommand(cmd),
 	)

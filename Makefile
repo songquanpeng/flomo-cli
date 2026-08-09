@@ -3,12 +3,11 @@ MODULE    := github.com/songquanpeng/flomo-cli
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GOFLAGS   ?=
 LDFLAGS   := -s -w -X main.version=$(VERSION)
-PREFIX    ?= /usr/local
-BINDIR    ?= $(PREFIX)/bin
+GO_INSTALL := go install $(MODULE)/cmd/flomo@latest
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test test-race vet fmt check install install-go clean
+.PHONY: help build test test-race vet fmt check install update clean
 
 help: ## Show available development targets
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -31,13 +30,10 @@ fmt: ## Format all Go source files
 
 check: test vet ## Run the checks used before release
 
-install: build ## Build and install flomo into /usr/local/bin
-	install -d "$(BINDIR)"
-	install -m 0755 "bin/$(APP)" "$(BINDIR)/$(APP)"
-	@echo "Installed $(APP) to $(BINDIR)/$(APP)"
+install: ## Install the latest released flomo into GOBIN
+	$(GO_INSTALL)
 
-install-go: ## Install with go install into GOBIN
-	go install $(GOFLAGS) -trimpath -ldflags "$(LDFLAGS)" ./cmd/flomo
+update: install ## Update flomo to the latest released version
 
 clean: ## Remove build artifacts
 	rm -rf ./bin

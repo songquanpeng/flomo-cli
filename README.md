@@ -2,21 +2,17 @@
 
 An offline-first CLI for capturing, syncing, and searching [flomo](https://flomoapp.com/) memos. It mirrors memos into SQLite and exposes stable, paginated JSON/JSONL output for coding agents and scripts.
 
-## Install
+## Install and update
 
-With Go 1.23 or newer:
+Installation and updates use the same command (Go 1.23 or newer):
 
 ```sh
 go install github.com/songquanpeng/flomo-cli/cmd/flomo@latest
 ```
 
 The executable is installed into `GOBIN`, or `$(go env GOPATH)/bin` when `GOBIN` is unset.
-
-From a source checkout, compile and install into `/usr/local/bin`:
-
-```sh
-sudo make install
-```
+Run the command again whenever you want to update. `flomo update` prints this exact command
+from the CLI, and `make install` / `make update` are convenience aliases for it.
 
 Then start using it:
 
@@ -28,8 +24,6 @@ flomo add "新的想法" --tag 灵感
 flomo edit <slug> --add-tag 已整理 --remove-tag 收件箱
 flomo attachments list <slug> --json
 ```
-
-To use another system prefix, run `sudo make install PREFIX=/custom/path`. `make install-go` installs the current checkout into `GOBIN` instead.
 
 Run `flomo --help`, `flomo <command> --help`, or `flomo agent-guide`; the CLI contains its complete operating guidance. Paginated text output prints the exact next command, while JSON includes a machine-readable `next.command`. Credentials are stored with mode `0600`, passwords are never saved, and `FLOMO_TOKEN` can provide an ephemeral token without writing it to disk.
 
