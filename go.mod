@@ -1,14 +1,14 @@
 module github.com/songquanpeng/flomo-cli
 
-go 1.23
+go 1.25.0
 
 require (
 	github.com/andybalholm/brotli v1.1.1
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.17.11
 	github.com/spf13/cobra v1.9.1
-	golang.org/x/net v0.34.0
-	golang.org/x/term v0.28.0
+	golang.org/x/net v0.55.0
+	golang.org/x/term v0.43.0
 	modernc.org/sqlite v1.34.5
 )
 
@@ -19,7 +19,7 @@ require (
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/spf13/pflag v1.0.6 // indirect
-	golang.org/x/sys v0.29.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 	modernc.org/libc v1.55.3 // indirect
 	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/memory v1.8.0 // indirect
