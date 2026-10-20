@@ -1,11 +1,11 @@
 module github.com/songquanpeng/flomo-cli
 
-go 1.23
+go 1.24
 
 require (
 	github.com/andybalholm/brotli v1.1.1
 	github.com/google/uuid v1.6.0
-	github.com/klauspost/compress v1.17.11
+	github.com/klauspost/compress v1.18.7
 	github.com/spf13/cobra v1.9.1
 	golang.org/x/net v0.34.0
 	golang.org/x/term v0.28.0
